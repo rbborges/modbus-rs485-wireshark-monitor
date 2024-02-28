@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-# AVR / Arduino dynamic memory log analyis script.
-#
+
 # Copyright 2014 Matthijs Kooijman <matthijs@stdin.nl>
+# Copyright 2024 Stephan Enderlein (modified and fixed)
 #
 # Permission is hereby granted, free of charge, to any person obtaining
 # a copy of this software and associated documentation files (the
@@ -56,21 +56,30 @@ class PcapFormatter(Formatter):
             4,            # minor version number
             0,            # GMT to local correction
             0,            # accuracy of timestamps
-            65535,        # max length of captured packets, in octets
-            195,          # data link type (DLT) - IEEE 802.15.4
+            1024,         # max length of captured packets, in octets
+            # https://www.tcpdump.org/linktypes.html
+            # https://www.geeksforgeeks.org/user-dlts-protocol-table-in-wireshark/
+            147,   # data link type (DLT) user specific
         ))
         self.out.flush()
 
     def write_packet(self, data):
         now = datetime.datetime.now()
         timestamp = int(time.mktime(now.timetuple()))
+
+        # pcap packet record
         self.out.write(struct.pack("=IIII",
             timestamp,        # timestamp seconds
             now.microsecond,  # timestamp microseconds
-            len(data),        # number of octets of packet saved in file
-            len(data),        # actual length of packet
+            len(data),     # number of bytes of packet
+            len(data),     # actual length of packet
         ))
+
+	# pay load
+        #sl=slice(len(data))
+        print("write: {}".format(binascii.hexlify(data).decode()))
         self.out.write(data)
+
         self.out.flush()
 
 class HumanFormatter(Formatter):
@@ -93,7 +102,9 @@ def open_fifo(options, name):
     if not options.quiet:
         print("Waiting for fifo to be openend...")
     # This blocks until the other side of the fifo is opened
-    return open(name, 'wb')
+    ret = open(name, 'wb')
+    print("Fifo connected")
+    return ret
 
 def setup_output(options):
     if options.fifo:
@@ -104,10 +115,10 @@ def setup_output(options):
         return HumanFormatter(sys.stdout)
 
 def main():
-    parser = argparse.ArgumentParser(description='Convert 802.15.4 packets read from a serial port into pcap format')
+    parser = argparse.ArgumentParser(description='converts packets read from a serial port into pcap format')
     parser.add_argument('port',
                         help='The serial port to read from')
-    parser.add_argument('-b', '--baudrate', default=115200, type=int,
+    parser.add_argument('-b', '--baudrate', default=19200, type=int,
                         help='The baudrate to use for the serial port (defaults to %(default)s)')
     parser.add_argument('-q', '--quiet', action='store_true',
                         help='Do not output any informational messages')
@@ -126,43 +137,27 @@ def main():
     options = parser.parse_args();
 
     try:
-        # If the fifo got closed, just start over again
+        # timeout separates the modbus request from modbus response. a timeout of  0.001 already is sufficiant, but
+        # I have set it to much smaller to still separate requests/responses for fast responsive slave devices.
+        # Timout value was tested with 19200 baud.
+        timeout=0.00001
+        ser = serial.Serial(options.port, options.baudrate,serial.EIGHTBITS,serial.PARITY_EVEN,serial.STOPBITS_ONE,timeout)
+        print("Opened {} at {}".format(options.port, options.baudrate))
+        out = setup_output(options)
+
+        print("Write pcap header to pipe")
+        out.write_header()
+
         while True:
-            do_sniff_once(options)
+            do_sniff_once(options,out,ser)
+
+        ser.close()
+        out.close()
     except KeyboardInterrupt:
         pass
 
-def do_sniff_once(options):
-    # This might block until the other side of the fifo is opened
-    out = setup_output(options)
-    out.write_header()
+def do_sniff_once(options,out,ser):
 
-    ser = serial.Serial(options.port, options.baudrate)
-    print("Opened {} at {}".format(options.port, options.baudrate))
-
-    if options.send_init_delay:
-        if not options.quiet:
-            print("Waiting for {} second{}".format(options.send_init_delay, 's' if options.send_init_delay != 1 else ''))
-        time.sleep(options.send_init_delay)
-
-    if (options.send_init):
-        if not options.quiet:
-            print("Sending: {}".format(options.send_init))
-        ser.write(options.send_init)
-
-    if (options.read_init):
-        if not options.quiet:
-            print("Waiting to read: {}".format(options.read_init))
-        read = ser.read(len(options.read_init))
-        while True:
-            if read == options.read_init:
-                break
-            read = read[1:] + ser.read()
-
-    if not options.quiet:
-        print("Waiting for packets...")
-
-    count = 0
     poll = select.poll()
     # Wait to read data from serial, or until the fifo is closed
     poll.register(ser, select.POLLIN)
@@ -178,21 +173,17 @@ def do_sniff_once(options):
             break
         elif ser.fileno() in fds:
             # First byte is length of packet, followed by raw data bytes
-            length = ser.read()[0]
-            data = ser.read(length)
-            count += 1
+            #length = ser.read()[0]
+            data = ser.read(1024)
+            print("LEN {}".format(len(data)))
             try:
                 out.write_packet(data)
+                break
             except OSError as e:
                 # SIGPIPE indicates the fifo was closed
                 if e.errno == errno.SIGPIPE:
                     break
 
-    ser.close()
-    out.close()
-
-    if not options.quiet:
-        print("Captured {} packet{}".format(count, 's' if count != 1 else ''))
 
 if __name__ == '__main__':
     main()

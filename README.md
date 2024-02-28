@@ -1,63 +1,9 @@
-serial-pcap
-===========
-This script is intended to read raw packets (currently only 802.15.4
-packets prefixed by a length byte) from a serial port and output them
-in pcap format.
-
-You'll need the `pyserial` package.
-You can install it through pip using `pip install pyserial`.
-
-Default arguments are currently aimed at capturing packets using a
-Pinoccio Scout board, so when using a Pinoccio Scout you can just run:
-
-    serial-pcap /dev/ttyACM0
-
-and see packets (raw byte values) on stdout.
-
-For all options supported, run `serial-pcap --help`.
-
-Live capture with wireshark
----------------------------
-[Wireshark][] can be used to view the captured packets as they come in.
-To enable this, run the script with the `--fifo` option:
-
-	serial-pcap --fifo /tmp/wireshark /dev/ttyACM0
-
-This creates a FIFO at `/tmp/wireshark` and waits for Wireshark to open
-the fifo.
-
-Then, start Wireshark and configure it to use the fifo (Capture ->
-Options... -> Manage Interfaces). Once you start the capture in
-Wireshark, serial-pcap will open the serial interface and start
-capturing packets.
-
-[Wireshark]: http://www.wireshark.org
-
-Operating systems
------------------
-This script was developed and tested on Linux. It probably runs on OSX
-too. On Windows, running the live capture through a FIFO probably does
-not work, but capturing to a file probably does.
-
-Related projects
-----------------
-This script was inspired by [WSBridge][], which serves a similar
-purpose. With proper options passed, this script should be usable
-instead of WSBridge with hardware running the [Chibi][] stack from
-Freaklabs.
-
-[WSBridge]: http://www.freaklabs.org/index.php/WSBridge.html
-[Chibi]: http://www.freaklabs.org/index.php/Chibi-A-Simple-Open-Source-Wireless-Stack.html
-
-This script should also be usable with [this Contiki-OS example
-program][Contiki-sniff] to sniff using Contiki-supported hardware
-(again, when passed the right commandline options).
-
-[Contiki-sniff]: https://github.com/cetic/contiki/blob/sniffer/examples/sniffer/sniffer.c
-
 License
 -------
 This script and related content is licensed under the MIT license.
+~~~
+Copyright 2014 Matthijs Kooijman <matthijs@stdin.nl>
+Copyright 2024 Stephan Enderlein (modified and fixed)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -76,3 +22,68 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+~~~
+
+# Introduction
+-------------
+This python script allows to monitor the modbus RTU messages with wireshark. \
+It connects to a serial port where the modbus usb adapter (RS485) is connected to and creates a file pipe.\
+All captured data are put into pcap packages that can be received via this pipe
+by whireshark to display the modbus packages.
+
+# Prerequisites
+The python script needs following
+- python3
+- pyserial ```pip install pyserial```
+
+**Steps** (keep order):
+- start script
+~~~sh
+./serial-pcap -b 19200 --fifo /tmp/wireshark /dev/ttyUSB0
+~~~
+- prepare wireshark to use pipe
+- start monitoring pipe
+
+## Start the script
+The script connects the usb modbus RS485 adapter and creates a pipe (fifo). \
+It waits for the connection of wireshark (or any other program that opens this pipe).
+~~~sh
+./serial-pcap -b 19200 --fifo /tmp/wireshark /dev/ttyUSB0
+~~~
+
+## Prepare Wireshark
+Wireshark allows to hear on pipes. It handles the data same way as it
+loads a pcap file. The script first creates a pcap header and all other
+request and response packages are packed into their own pcap records.
+
+To let wireshark get the needed pcap header, it must be configured and started
+**BEFORE** starting the serial-pcap script.
+
+- start wireshark
+- configure wireshark to process the user DLT (used by script in pcap header) as modbus rtu packages
+  - go to ```Edit->Preferences->Protocol->DLT_USER```
+  - edit *Encapsulations Table*
+  - add a new entry (if not already) select ```DLT=147``` for DLT and set *Payload protocol* to ```mbrtu```
+  - press ok and close preferences
+- go to ```Capture->Options->Manage Interfaces->Pipes```, add the pipe ```/tmp/wireshark``` and press ok
+- select the pipe (in current dialog, which is added to the list)
+- press "start"
+
+When there was a pipe already created before (manually via ```mkfifo /tmp/wireshark``` or by a previous call of serial-pcap) wireshark starts monitoring
+
+Unfortunately wireshark only remembers the Encapsulations Tabel entries, but
+not the pipe. This must be configured each time after starting wireshark
+
+
+# Changes
+-------
+Project is originally cloned from https://github.com/Pinoccio/tool-serial-pcap
+
+- use a user DLT (data link type) and remove notworking pcap encapsulation
+- remove blocking code that prevents getting data from usb modbus adapter
+- keep serial port always open instead of open/close on each cycle (avoids loosing data)
+
+
+# Links
+- https://datatracker.ietf.org/doc/id/draft-gharris-opsawg-pcap-00.html
+- https://www.tcpdump.org/linktypes.html
