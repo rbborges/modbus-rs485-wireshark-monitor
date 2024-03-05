@@ -176,13 +176,14 @@ def do_sniff_once(options,out,ser):
             #length = ser.read()[0]
             data = ser.read(1024)
             print("LEN {}".format(len(data)))
-            try:
-                out.write_packet(data)
-                break
-            except OSError as e:
-                # SIGPIPE indicates the fifo was closed
-                if e.errno == errno.SIGPIPE:
+            if len(data) > 0:
+                try:
+                    out.write_packet(data)
                     break
+                except OSError as e:
+                    # SIGPIPE indicates the fifo was closed
+                    if e.errno == errno.SIGPIPE:
+                        break
 
 
 if __name__ == '__main__':
