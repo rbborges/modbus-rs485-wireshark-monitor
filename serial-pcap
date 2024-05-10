@@ -108,10 +108,13 @@ def open_fifo(options, name):
 
 def setup_output(options):
     if options.fifo:
+        print("Write to fifo: {}".format(options.fifo))
         return PcapFormatter(open_fifo(options, options.fifo))
     elif options.write_file:
+        print("Write to file: {}".format(options.write_file))
         return PcapFormatter(open(options.write_file, 'wb'))
     else:
+        print("Write to stdout")
         return HumanFormatter(sys.stdout)
 
 def main():
