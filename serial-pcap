@@ -77,7 +77,7 @@ class PcapFormatter(Formatter):
 
 	# pay load
         #sl=slice(len(data))
-        print("write: {}".format(binascii.hexlify(data).decode()))
+        # print("write: {}".format(binascii.hexlify(data).decode()))
         self.out.write(data)
 
         self.out.flush()
@@ -143,7 +143,7 @@ def main():
         # timeout separates the modbus request from modbus response. a timeout of  0.001 already is sufficiant, but
         # I have set it to much smaller to still separate requests/responses for fast responsive slave devices.
         # Timout value was tested with 19200 baud.
-        timeout=0.00001
+        timeout=None
         ser = serial.Serial(options.port, options.baudrate,serial.EIGHTBITS,serial.PARITY_EVEN,serial.STOPBITS_ONE,timeout)
         print("Opened {} at {}".format(options.port, options.baudrate))
         out = setup_output(options)
@@ -166,6 +166,12 @@ def do_sniff_once(options,out,ser):
     poll.register(ser, select.POLLIN)
     poll.register(out, select.POLLERR)
 
+    t3p5 = 1.750e-3 # inter-frame time = 1.75 ms
+    current_packet = bytearray()
+    last_read_time = time.time()
+
+    time_last_packet = time.time()
+
     while True:
         # Wait for something to do
         events = poll.poll()
@@ -175,19 +181,47 @@ def do_sniff_once(options,out,ser):
             # Error on output, e.g. fifo closed on the other end
             break
         elif ser.fileno() in fds:
-            # First byte is length of packet, followed by raw data bytes
-            #length = ser.read()[0]
-            data = ser.read(1024)
-            print("LEN {}".format(len(data)))
-            if len(data) > 0:
-                try:
-                    out.write_packet(data)
-                    break
-                except OSError as e:
-                    # SIGPIPE indicates the fifo was closed
-                    if e.errno == errno.SIGPIPE:
+
+            while True:
+                # Read up to 1024 bytes (arbitrary choice)
+                data = ser.read(1)
+
+                if data:
+                    # We have received some data
+                    current_time = time.time()
+                    # print(f"current_time - last_read_time [ms] = { (current_time - last_read_time ) * 1e3}")
+
+                    # Check how much time has elapsed since last data
+                    if (current_time - last_read_time) > t3p5:
+                        # Silence was long enough to consider the old data a "complete" packet
+                        # print(f"current_time - time_last_packet [ms] = { (current_time - time_last_packet ) * 1e3}")
+                        # time_last_packet = current_time
+                        
+                        if current_packet:
+                            # Process or store the completed packet
+                            # print(f"Received packet (length={len(current_packet)}): {current_packet}")
+                            # print(f"Received packet (length={len(current_packet)})")
+
+                            if len(current_packet) > 0:
+                                try:
+                                    out.write_packet(current_packet)
+                                except OSError as e:
+                                    # SIGPIPE indicates the fifo was closed
+                                    if e.errno == errno.SIGPIPE:
+                                        break
+                                            
+                        # Clear current packet buffer
+                        current_packet = bytearray()
+                        current_packet.extend(data)
+                        # Update the time we last received data
+                        last_read_time = current_time
                         break
 
+                    # Append new data to the current packet
+                    current_packet.extend(data)
+
+                    # Update the time we last received data
+                    last_read_time = current_time
 
 if __name__ == '__main__':
     main()
